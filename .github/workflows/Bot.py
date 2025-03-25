@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Bot configuration
 TELEGRAM_BOT_TOKEN = '8139449951:AAHYdQskTW3EAXmbhcY-UQR5IvIydaR_7Gg'
-INITIAL_BRAWL_STARS_API_TOKEN = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiIsImtpZCI6IjI4YTMxOGY3LTAwMDAtYTFlYi03ZmExLTJjNzQzM2M2Y2NhNSJ9.eyJpc3MiOiJzdXBlcmNlbGwiLCJhdWQiOiJzdXBlcmNlbGw6Z2FtZWFwaSIsImp0aSI6IjkxZWZjZjczLWNmMGYtNDc3YS05Zjg3LTQ4ODdmYTFjZWU1NCIsImlhdCI6MTc0Mjg3NzczMiwic3ViIjoiZGV2ZWxvcGVyL2RjYmNlNjM4LTk1MjctODRjMC1iYjc3LTBlM2RkZDM5NzQxZSIsInNjb3BlcyI6WyJicmF3bHN0YXJzIl0sImxpbWl0cyI6W3sidGllciI6ImRldmVsb3Blci9zaWx2ZXIiLCJ0eXBlIjoidGhyb3R0bGluZyJ9LHsiY2lkcnMiOlsiMTUyLjU4LjQ1Ljc1Il0sInR5cGUiOiJjbGllbnQifV19.ZkEYzBQwfop88EGW8lvo5pvoQqnIzAERX7HeLdwtj98l2zvPW7u19F7a33DHlcyrcfUrsjgjixP7D7dhwOMpcQ'
+INITIAL_BRAWL_STARS_API_TOKEN = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiIsImtpZCI6IjI4YTMxOGY3LTAwMDAtYTFlYi03ZmExLTJjNzQzM2M2Y2NhNSJ9.eyJpc3MiOiJzdXBlcmNlbGwiLCJhdWQiOiJzdXBlcmNlbGw6Z2FtZWFwaSIsImp0aSI6IjI4MDFjZjRlLTFhMDctNDI4MS04N2YwLTBjYzE1MzEwZmM0YSIsImlhdCI6MTc0Mjg5NzczMCwic3ViIjoiZGV2ZWxvcGVyL2RjYmNlNjM4LTk1MjctODRjMC1iYjc3LTBlM2RkZDM5NzQxZSIsInNjb3BlcyI6WyJicmF3bHN0YXJzIl0sImxpbWl0cyI6W3sidGllciI6ImRldmVsb3Blci9zaWx2ZXIiLCJ0eXBlIjoidGhyb3R0bGluZyJ9LHsiY2lkcnMiOlsiMTUyLjU4LjQ1LjE4NiJdLCJ0eXBlIjoiY2xpZW50In1dfQ.rvPPSX9xc4OSe71Uz8tsDP-UK2JcsYCjPR0FuUnw8l5L9891Q16AOvXrix6l8QU8d78-m8ChwjxWKwpG5SKKtA'
 BRAWL_STARS_API_URL = 'https://api.brawlstars.com/v1/players/'
 OWNER_LINK = 'https://t.me/ytgaming_on'
 GLOBAL_CHAT_ID_ENDPOINT = 'https://yourusername.pythonanywhere.com/chat_ids'  # Replace with your server URL
@@ -30,6 +30,8 @@ BRAWL_STARS_API_TOKEN = [INITIAL_BRAWL_STARS_API_TOKEN]
 user_count = random.randint(50, 100)
 banned_count = random.randint(20, 50)
 local_chat_ids = set()
+last_api_response = None  # To store the last API response or error
+custom_players = {}  # Dictionary to store custom player data
 
 # Fake server messages
 SERVER_MESSAGES = [
@@ -45,18 +47,25 @@ WHATSAPP_LINK = 'https://api.whatsapp.com/send/?phone=994402638009'
 INSTAGRAM_LINK = 'https://www.instagram.com/ytgaming_on?igsh=MTdzbmlrMGszbWI5dw=='
 TELEGRAM_CHANNEL_LINK = 'https://t.me/ytgaming_on'
 
-def is_valid_player_tag(player_tag: str) -> bool:
+def is_valid_api_player_tag(player_tag: str) -> bool:
+    # Strict validation for real Brawl Stars API tags
     return re.match(r'^[0289PYLQGRJCUV]+$', player_tag) is not None
 
+def is_valid_custom_player_tag(player_tag: str) -> bool:
+    # Relaxed validation for custom tags: any uppercase letters and numbers
+    return re.match(r'^[A-Z0-9]+$', player_tag) is not None
+
 async def fetch_player_data(player_tag: str) -> dict:
-    if not is_valid_player_tag(player_tag):
-        logger.error(f"Invalid player tag format: {player_tag}")
+    global last_api_response
+    
+    if not is_valid_api_player_tag(player_tag):
+        logger.error(f"Invalid player tag format for API: {player_tag}")
         return None
     
     encoded_tag = f"%23{player_tag}"
     url = f"{BRAWL_STARS_API_URL}{encoded_tag}"
     headers = {
-        'Authorization': f'Bearer {BRAWL_STARS_API_TOKEN[0]}',  # Access the mutable token
+        'Authorization': f'Bearer {BRAWL_STARS_API_TOKEN[0]}',
         'Accept': 'application/json'
     }
     
@@ -66,11 +75,25 @@ async def fetch_player_data(player_tag: str) -> dict:
         logger.info(f"API response status: {response.status_code}")
         
         if response.status_code == 200:
+            last_api_response = {
+                "status": response.status_code,
+                "data": response.json()
+            }
             return response.json()
         else:
+            error_details = {
+                "status": response.status_code,
+                "reason": response.json().get("reason", "Unknown"),
+                "message": response.json().get("message", "No message provided")
+            }
+            last_api_response = error_details
             logger.error(f"API error: {response.status_code} - {response.text}")
             return None
     except requests.RequestException as e:
+        last_api_response = {
+            "status": "network_error",
+            "message": str(e)
+        }
         logger.error(f"Network error fetching player data: {e}")
         return None
 
@@ -144,9 +167,26 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text('❌ Please provide a player tag. Usage: /info <player_tag>')
         return
     player_tag = context.args[0].strip('#').upper()
-    if not is_valid_player_tag(player_tag):
-        await update.message.reply_text(f'❌ The provided player tag #{player_tag} is invalid.')
+    
+    # Check if it's a custom player first
+    if player_tag in custom_players:
+        player_data = custom_players[player_tag]
+        message = (
+            f'🔍 Player Info for #{player_tag} (Custom Player):\n'
+            f'👤 Name: {player_data.get("name", "Unknown")}\n'
+            f'🏆 Trophies: {player_data.get("trophies", 0)}\n'
+            f'🥇 Highest Trophies: {player_data.get("highestTrophies", 0)}\n'
+            f'🎓 Experience Level: {player_data.get("expLevel", 0)}\n'
+            f'🔓 Brawlers Unlocked: {player_data.get("brawlers", 0)}'
+        )
+        await update.message.reply_text(message)
         return
+    
+    # If not custom, validate for API and fetch
+    if not is_valid_api_player_tag(player_tag):
+        await update.message.reply_text(f'❌ The provided player tag #{player_tag} is invalid for real players.')
+        return
+    
     player_data = await fetch_player_data(player_tag)
     if player_data:
         message = (
@@ -171,8 +211,29 @@ async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     
     player_tag = context.args[0].strip('#').upper()
-    if not is_valid_player_tag(player_tag):
-        await update.message.reply_text(f'❌ The provided player tag #{player_tag} is invalid.')
+    
+    # Check if it's a custom player first
+    if player_tag in custom_players:
+        player_data = custom_players[player_tag]
+        message = (
+            f'🔍 Player Info for #{player_tag} (Custom Player):\n'
+            f'👤 Name: {player_data.get("name", "Unknown")}\n'
+            f'🏆 Trophies: {player_data.get("trophies", 0)}\n'
+            f'🥇 Highest Trophies: {player_data.get("highestTrophies", 0)}\n'
+            f'🎓 Experience Level: {player_data.get("expLevel", 0)}\n'
+            f'🔓 Brawlers Unlocked: {player_data.get("brawlers", 0)}\n\n'
+            '⚠️ Ready to initiate attack?'
+        )
+        keyboard = [
+            [InlineKeyboardButton("Start Attack 🚀", callback_data=f'start_attack_{player_tag}')],
+            [InlineKeyboardButton("Terminate ❌", callback_data=f'terminate_{player_tag}')]
+        ]
+        await update.message.reply_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+    
+    # If not custom, validate for API and fetch
+    if not is_valid_api_player_tag(player_tag):
+        await update.message.reply_text(f'❌ The provided player tag #{player_tag} is invalid for real players.')
         return
     
     if chat_id != ADMIN_CHAT_ID:
@@ -208,6 +269,62 @@ async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
     else:
         await update.message.reply_text(f'❌ Could not retrieve data for player #{player_tag}.')
+
+async def addplayer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    if chat_id != ADMIN_CHAT_ID:
+        await update.message.reply_text('❌ Only the bot owner can use this command.')
+        return
+    
+    if len(context.args) < 5:
+        await update.message.reply_text(
+            '❌ Usage: /addplayer <player_tag> <name> <trophies> <highestTrophies> <expLevel> <brawlers>\n'
+            'Example: /addplayer JBEIOEOS1 FakePlayer 1000 1500 50 20'
+        )
+        return
+    
+    player_tag = context.args[0].strip('#').upper()
+    if not is_valid_custom_player_tag(player_tag):
+        await update.message.reply_text(f'❌ The provided player tag #{player_tag} is invalid. Use only uppercase letters and numbers.')
+        return
+    
+    # Check if the tag already exists as a custom player
+    if player_tag in custom_players:
+        await update.message.reply_text(f'❌ Custom player with tag #{player_tag} already exists.')
+        return
+    
+    # Check if the tag exists in the real API (only if it matches API format)
+    if is_valid_api_player_tag(player_tag):
+        real_player_data = await fetch_player_data(player_tag)
+        if real_player_data:
+            await update.message.reply_text(f'❌ Player tag #{player_tag} already exists in the real Brawl Stars API. Choose a different tag.')
+            return
+    
+    try:
+        name = context.args[1]
+        trophies = int(context.args[2])
+        highest_trophies = int(context.args[3])
+        exp_level = int(context.args[4])
+        brawlers = int(context.args[5])
+        
+        custom_players[player_tag] = {
+            "name": name,
+            "trophies": trophies,
+            "highestTrophies": highest_trophies,
+            "expLevel": exp_level,
+            "brawlers": brawlers
+        }
+        
+        await update.message.reply_text(
+            f'✅ Custom player #{player_tag} added successfully!\n'
+            f'👤 Name: {name}\n'
+            f'🏆 Trophies: {trophies}\n'
+            f'🥇 Highest Trophies: {highest_trophies}\n'
+            f'🎓 Experience Level: {exp_level}\n'
+            f'🔓 Brawlers Unlocked: {brawlers}'
+        )
+    except ValueError:
+        await update.message.reply_text('❌ Invalid numeric values provided. Trophies, highestTrophies, expLevel, and brawlers must be integers.')
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     owner_id = ADMIN_CHAT_ID
@@ -245,15 +362,46 @@ async def api(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     
     if not context.args:
-        # Show current API token
         current_token = BRAWL_STARS_API_TOKEN[0]
         await update.message.reply_text(f"🔑 Current Brawl Stars API Token:\n`{current_token}`\n\nTo update, use: `/api <new_token>`")
     else:
-        # Update API token
         new_token = ' '.join(context.args).strip()
         old_token = BRAWL_STARS_API_TOKEN[0]
         BRAWL_STARS_API_TOKEN[0] = new_token
         await update.message.reply_text(f"🔑 API Token Updated!\nOld: `{old_token}`\nNew: `{new_token}`\n\nUse `/info` or `/ban` to test the new token.")
+
+async def chkapi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    if chat_id != ADMIN_CHAT_ID:
+        await update.message.reply_text('❌ Only the bot owner can use this command.')
+        return
+    
+    if last_api_response is None:
+        await update.message.reply_text("ℹ️ No API requests have been made yet.")
+        return
+    
+    if last_api_response.get("status") == 200:
+        message = (
+            "✅ Last API Request Successful\n"
+            f"Status: {last_api_response['status']}\n"
+            "Response: Player data retrieved successfully"
+        )
+    elif last_api_response.get("status") == "network_error":
+        message = (
+            "❌ Last API Request Failed (Network Error)\n"
+            f"Error: {last_api_response['message']}"
+        )
+    else:
+        message = (
+            "❌ Last API Request Failed\n"
+            f"Status: {last_api_response['status']}\n"
+            f"Reason: {last_api_response['reason']}\n"
+            f"Message: {last_api_response['message']}\n\n"
+            "🔧 Use this info to generate a new API key at https://developer.brawlstars.com\n"
+            "Then update with: `/api <new_token>`"
+        )
+    
+    await update.message.reply_text(message)
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     global banned_count
@@ -338,7 +486,9 @@ def main():
     application.add_handler(CommandHandler("ping", ping))
     application.add_handler(CommandHandler("info", info))
     application.add_handler(CommandHandler("broadcast", broadcast))
-    application.add_handler(CommandHandler("api", api))  # New API command handler
+    application.add_handler(CommandHandler("api", api))
+    application.add_handler(CommandHandler("chkapi", chkapi))
+    application.add_handler(CommandHandler("addplayer", addplayer))
     application.add_handler(CallbackQueryHandler(button))
     
     loop.create_task(update_counters())
